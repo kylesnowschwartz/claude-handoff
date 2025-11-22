@@ -1,11 +1,9 @@
 ---
-description: Generate a focused prompt and file list for starting a new thread. analyze the thread, extract relevant context, identify files, and generate a draft prompt for the new thread.
+description: Prepare handoff context, then run /clear to start fresh
 ---
 
-/claude-handoff:handoff $ARGUMENTS
+Run `/claude-handoff:handoff <your goal>` followed by `/clear`.
 
-Analyzing current thread for handoff...
+**Goal:** $ARGUMENTS
 
-Goal for new thread: $ARGUMENTS
-
-
+The UserPromptSubmit hook analyzes your thread and prepares handoff context. When you `/clear`, SessionStart injects it automatically.

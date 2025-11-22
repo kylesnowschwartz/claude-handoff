@@ -6,7 +6,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/entrypoints/user-prompt-submit.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/entrypoints/debug-user-prompt-submit.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/entrypoints/debug-session-end.sh"
           }
         ]
       }

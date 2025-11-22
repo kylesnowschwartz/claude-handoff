@@ -11,14 +11,14 @@ prompt=$(echo "$input" | jq -r '.prompt // ""')
 session_id=$(echo "$input" | jq -r '.session_id')
 transcript_path=$(echo "$input" | jq -r '.transcript_path // ""')
 
-# Detect /clear command (with optional goal argument)
-if [[ "$prompt" == "/clear"* ]]; then
-  # Extract optional goal after "/clear "
-  goal="${prompt#/clear }"
+# Detect /claude-handoff:handoff command
+if [[ "$prompt" == *"/claude-handoff:handoff"* ]]; then
+  # Extract goal after ":handoff "
+  goal="${prompt#*:handoff }"
   goal=$(echo "$goal" | xargs) # trim whitespace
 
   # If goal is empty, use default
-  if [[ -z "$goal" || "$goal" == "/clear" ]]; then
+  if [[ -z "$goal" ]]; then
     goal="Continue previous work"
   fi
 
@@ -58,7 +58,9 @@ This is a proof-of-concept. In the full implementation, this will contain:
     }' >"$state_dir/handoff-context.json"
 
   # Inform user that handoff is prepared
-  jq -n --arg msg "✓ Handoff context prepared. /clear will start with: $goal" '{
+  jq -n --arg msg "✓ Handoff context prepared for: $goal
+
+Now run \`/clear\` to start a fresh session with this context automatically injected." '{
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
       additionalContext: $msg
