@@ -1,0 +1,17 @@
+{
+  "name": "claude-handoff",
+  "owner": {
+    "name": "Kyle Snow Schwartz",
+    "email": "kyle@kylesnowschwartz.com"
+  },
+  "description": "Local marketplace for Claude-Handoff plugin development",
+  "version": "1.0.0",
+  "plugins": [
+    {
+      "name": "claude-handoff",
+      "version": "1.0.0",
+      "source": "./handoff-plugin",
+      "description": "Intelligent context transfer for focused thread transitions"
+    }
+  ]
+}

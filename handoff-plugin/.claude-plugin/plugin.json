@@ -1,0 +1,13 @@
+{
+  "name": "claude-handoff",
+  "version": "1.0.0",
+  "description": "Replace /compact with intelligent context transfer - analyzes current thread and generates focused prompts for new threads based on your goal",
+  "author": {
+    "name": "Kyle Snow Schwartz",
+    "email": "kyle@kylesnowschwartz.com"
+  },
+  "homepage": "https://github.com/kylesnowschwartz/claude-handoff",
+  "repository": "https://github.com/kylesnowschwartz/claude-handoff",
+  "license": "MIT",
+  "keywords": ["handoff", "context", "thread-management", "compaction", "focus"]
+}
