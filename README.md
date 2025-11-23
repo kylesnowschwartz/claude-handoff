@@ -4,7 +4,7 @@ Goal-focused context transfer for Claude Code - transform `/compact` into system
 
 ## What It Does
 
-Claude-Handoff extends `/compact` with optional goal-focused handoff. When you run `/compact handoff:<your goal>`, the plugin:
+Claude-Handoff extends `/compact` with optional goal-focused handoff. When you run `/compact handoff:<your goal>` the plugin:
 
 1. Captures your goal and current session state before compaction
 2. Analyzes the previous thread to extract an immediate handoff instructions
