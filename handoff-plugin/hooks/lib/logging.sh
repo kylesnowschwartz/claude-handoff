@@ -19,7 +19,7 @@
 #   /tmp/handoff-<hook-name>.log (fresh file on each hook invocation)
 # ============================================================================
 
-LOGGING_ENABLED=true # Set to false to disable all logging
+LOGGING_ENABLED=false # Set to false to disable all logging
 
 # Log file will be set by init_logging
 LOG_FILE=""
