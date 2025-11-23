@@ -15,6 +15,15 @@ Claude-Handoff extends `/compact` with optional goal-focused handoff. When you r
 
 Traditional compaction is lossy and unfocused - each summary degrades context quality. Goal-focused handoff extracts only what matters for your specific next step through ruthless selectivity, producing sharper results.
 
+## Design Trade-off
+
+Automation over transparency. Unlike [AmpCode's handoff model](https://ampcode.com/news/handoff), this plugin auto-injects generated context without human review. Claude Code hooks can't pause for user editing.
+
+**You get:** Zero-friction workflow
+**You lose:** Ability to verify/edit extracted context before injection
+
+Use when you trust AI extraction. Don't use when you need verification.
+
 ## Installation
 
 ```bash
