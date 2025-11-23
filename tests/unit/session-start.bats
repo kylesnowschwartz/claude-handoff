@@ -1,9 +1,10 @@
-# session-start.bats - Unit tests for SessionStart hook
+# session-start.bats - Unit tests for SessionStart hook (fork-session architecture)
 #
-# Purpose: Test the session-start.sh hook behavior
-# Tests: Source filtering, state file detection, exit behavior
+# Purpose: Test session-start.sh injecting pre-generated handoff content
+# NOTE: Tests simplified - no more claude --resume calls, just content injection
+# Tests: Source filtering, handoff_content injection, cleanup
 
-# bats file_tags=unit,hooks,session-start
+# bats file_tags=unit,hooks,session-start,fork-session-architecture
 
 # Load Bats libraries
 load '../test_helper/bats-support/load'
@@ -31,7 +32,7 @@ teardown() {
 }
 
 # Test 1: SessionStart with no state file exits silently
-# bats test_tags=state-file,missing
+# bats test_tags=critical,state-file,missing
 @test "should exit silently with no state file" {
   # Prepare input JSON
   local input=$(jq -n \
@@ -53,10 +54,20 @@ teardown() {
 }
 
 # Test 2: SessionStart with source != "compact" exits silently
-# bats test_tags=source-filtering
+# bats test_tags=critical,source-filtering
 @test "should exit silently when source is not compact" {
-  # Create a state file first
-  create_state_file "test-session-prev" "manual" "test goal"
+  # Create state file with handoff_content
+  mkdir -p "$TEST_REPO/.git/handoff-pending"
+  jq -n \
+    --arg content "test handoff content" \
+    --arg goal "test goal" \
+    '{
+      handoff_content: $content,
+      goal: $goal,
+      trigger: "manual",
+      type: "compact"
+    }' \
+    >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
 
   # Prepare input JSON with source="other"
   local input=$(jq -n \
@@ -77,49 +88,32 @@ teardown() {
   assert_output ""
 
   # State file should still exist (not cleaned up)
-  assert_file_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+  assert_file_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
 }
 
-# Test 3: SessionStart with source="new" exits silently
-# bats test_tags=source-filtering
-@test "should exit silently when source is new" {
-  # Create a state file first
-  create_state_file "test-session-prev" "manual" "test goal"
-
-  # Prepare input JSON with source="new"
-  local input=$(jq -n \
-    --arg cwd "$TEST_REPO" \
-    '{
-      session_id: "new-session-new",
-      cwd: $cwd,
-      source: "new"
-    }')
-
-  # Run hook
-  run bash "$SESSIONSTART_HOOK" <<<"$input"
-
-  # Should exit successfully
-  assert_success
-
-  # Should have no output
-  assert_output ""
-
-  # State file should still exist
-  assert_file_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
-}
-
-# Test 4: SessionStart with empty previous_session exits and cleans up
-# bats test_tags=validation,cleanup
-@test "should clean up state file if previous_session is empty" {
-  # Create state file with empty previous_session
+# Test 3: SessionStart injects handoff_content successfully
+# bats test_tags=critical,injection,success-path
+@test "should inject handoff_content as systemMessage" {
+  # Create state file with handoff_content
   mkdir -p "$TEST_REPO/.git/handoff-pending"
+  local handoff_text="## Goal
+Implement OAuth integration
+
+## Relevant Context
+- Basic login implemented
+- Need OAuth provider support
+
+## Key Details
+- src/auth.ts - main module
+- tests/auth.test.ts - test suite"
+
   jq -n \
-    --arg cwd "$TEST_REPO" \
+    --arg content "$handoff_text" \
+    --arg goal "implement OAuth integration" \
     '{
-      previous_session: "",
+      handoff_content: $content,
+      goal: $goal,
       trigger: "manual",
-      cwd: $cwd,
-      user_instructions: "test goal",
       type: "compact"
     }' \
     >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
@@ -128,7 +122,7 @@ teardown() {
   local input=$(jq -n \
     --arg cwd "$TEST_REPO" \
     '{
-      session_id: "new-session-789",
+      session_id: "new-session-inject",
       cwd: $cwd,
       source: "compact"
     }')
@@ -139,24 +133,70 @@ teardown() {
   # Should exit successfully
   assert_success
 
-  # Should have no output
-  assert_output ""
+  # Output should be valid JSON
+  assert_valid_json "$output"
 
-  # State file should be cleaned up
-  assert_file_not_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+  # Output should contain systemMessage field
+  local has_system_message
+  has_system_message=$(echo "$output" | jq 'has("systemMessage")')
+  assert_equal "$has_system_message" "true"
+
+  # systemMessage should contain the handoff content
+  local message_content
+  message_content=$(echo "$output" | jq -r '.systemMessage')
+  assert_regex "$message_content" "OAuth integration"
+  assert_regex "$message_content" "src/auth.ts"
 }
 
-# Test 5: SessionStart with missing previous_session field exits and cleans up
-# bats test_tags=validation,cleanup
-@test "should clean up state file if previous_session is missing" {
-  # Create state file without previous_session field
+# Test 4: SessionStart cleans up state file after injection
+# bats test_tags=critical,cleanup
+@test "should clean up state file after successful injection" {
+  # Create state file with handoff_content
   mkdir -p "$TEST_REPO/.git/handoff-pending"
   jq -n \
+    --arg content "test handoff content" \
+    --arg goal "test goal" \
+    '{
+      handoff_content: $content,
+      goal: $goal,
+      trigger: "manual",
+      type: "compact"
+    }' \
+    >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
+
+  # Verify state file exists
+  assert_file_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+
+  # Prepare input JSON
+  local input=$(jq -n \
     --arg cwd "$TEST_REPO" \
     '{
-      trigger: "manual",
+      session_id: "new-session-cleanup",
       cwd: $cwd,
-      user_instructions: "test goal",
+      source: "compact"
+    }')
+
+  # Run hook
+  run bash "$SESSIONSTART_HOOK" <<<"$input"
+  assert_success
+
+  # State file should be deleted
+  assert_file_not_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+
+  # Directory should be deleted (since we only had one file)
+  assert_dir_not_exists "$TEST_REPO/.git/handoff-pending"
+}
+
+# Test 5: SessionStart with missing handoff_content exits silently
+# bats test_tags=critical,validation
+@test "should exit silently when handoff_content is missing" {
+  # Create state file WITHOUT handoff_content (old format)
+  mkdir -p "$TEST_REPO/.git/handoff-pending"
+  jq -n \
+    --arg goal "test goal" \
+    '{
+      goal: $goal,
+      trigger: "manual",
       type: "compact"
     }' \
     >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
@@ -179,42 +219,31 @@ teardown() {
   # Should have no output
   assert_output ""
 
-  # State file should be cleaned up
-  assert_file_not_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+  # State file should still exist (not cleaned up for safety)
+  assert_file_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
 }
 
-# Test 6: SessionStart reads all state file fields correctly
-# bats test_tags=state-reading
-@test "should read all fields from state file correctly" {
-  # Create comprehensive state file
-  create_state_file "prev-session-uuid" "manual" "implement auth feature"
-
-  # Verify state file has correct structure
-  local state_file="$TEST_REPO/.git/handoff-pending/handoff-context.json"
-  assert_file_exist "$state_file"
-  assert_json_field_equals "$state_file" ".previous_session" "prev-session-uuid"
-  assert_json_field_equals "$state_file" ".trigger" "manual"
-  assert_json_field_equals "$state_file" ".user_instructions" "implement auth feature"
-  assert_json_field_equals "$state_file" ".type" "compact"
-
-  # Note: We can't test the actual claude --resume invocation in unit tests
-  # That requires integration tests with mocked claude binary
-}
-
-# Test 7: SessionStart with recursion prevention (HANDOFF_IN_PROGRESS)
-# bats test_tags=recursion-prevention
-@test "should exit immediately if HANDOFF_IN_PROGRESS is set" {
-  # Create state file
-  create_state_file "test-session-recursion" "manual" "test goal"
-
-  # Set recursion prevention flag
-  export HANDOFF_IN_PROGRESS=1
+# Test 6: SessionStart with empty handoff_content exits silently
+# bats test_tags=critical,validation
+@test "should exit silently when handoff_content is empty" {
+  # Create state file with empty handoff_content
+  mkdir -p "$TEST_REPO/.git/handoff-pending"
+  jq -n \
+    --arg content "" \
+    --arg goal "test goal" \
+    '{
+      handoff_content: $content,
+      goal: $goal,
+      trigger: "manual",
+      type: "compact"
+    }' \
+    >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
 
   # Prepare input JSON
   local input=$(jq -n \
     --arg cwd "$TEST_REPO" \
     '{
-      session_id: "new-session-recursion",
+      session_id: "new-session-empty",
       cwd: $cwd,
       source: "compact"
     }')
@@ -228,40 +257,11 @@ teardown() {
   # Should have no output
   assert_output ""
 
-  # State file should still exist (not processed)
-  assert_file_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
-
-  # Clean up
-  unset HANDOFF_IN_PROGRESS
+  # State file should still exist (didn't clean up)
+  assert_file_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
 }
 
-# Test 8: SessionStart with malformed state file JSON
-# bats test_tags=error-handling,malformed-json
-@test "should fail fast with malformed state file" {
-  # Create malformed state file
-  mkdir -p "$TEST_REPO/.git/handoff-pending"
-  echo "not valid json" >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
-
-  # Prepare input JSON
-  local input=$(jq -n \
-    --arg cwd "$TEST_REPO" \
-    '{
-      session_id: "new-session-malformed",
-      cwd: $cwd,
-      source: "compact"
-    }')
-
-  # Run hook - will fail due to jq parsing error (set -euo pipefail)
-  run bash "$SESSIONSTART_HOOK" <<<"$input"
-
-  # Should fail (jq returns non-zero for malformed JSON)
-  assert_failure
-
-  # This is expected behavior - the script uses set -euo pipefail
-  # and doesn't have a trap like pre-compact does
-}
-
-# Test 9: SessionStart with source field missing (defaults to "unknown")
+# Test 7: SessionStart with source field missing defaults to "unknown"
 # bats test_tags=defaults,missing-field
 @test "should handle missing source field" {
   # Prepare input JSON without source field
@@ -282,18 +282,18 @@ teardown() {
   assert_output ""
 }
 
-# Test 10: SessionStart with valid state file but no previous_session creates cleanup scenario
-# bats test_tags=edge-case
-@test "should handle state file with null previous_session" {
-  # Create state file with null previous_session
+# Test 8: SessionStart verifies correct JSON structure
+# bats test_tags=schema-validation
+@test "should return correct JSON structure with only systemMessage field" {
+  # Create state file with handoff_content
   mkdir -p "$TEST_REPO/.git/handoff-pending"
   jq -n \
-    --arg cwd "$TEST_REPO" \
+    --arg content "test handoff content for schema" \
+    --arg goal "test goal" \
     '{
-      previous_session: null,
+      handoff_content: $content,
+      goal: $goal,
       trigger: "manual",
-      cwd: $cwd,
-      user_instructions: "test goal",
       type: "compact"
     }' \
     >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
@@ -302,7 +302,79 @@ teardown() {
   local input=$(jq -n \
     --arg cwd "$TEST_REPO" \
     '{
-      session_id: "new-session-null",
+      session_id: "new-session-schema",
+      cwd: $cwd,
+      source: "compact"
+    }')
+
+  # Run hook
+  run bash "$SESSIONSTART_HOOK" <<<"$input"
+  assert_success
+
+  # Parse JSON and verify structure
+  local output_json="$output"
+
+  # Should have exactly one key: systemMessage
+  local key_count
+  key_count=$(echo "$output_json" | jq 'keys | length')
+  assert_equal "$key_count" "1"
+
+  # That key should be "systemMessage"
+  local key_name
+  key_name=$(echo "$output_json" | jq -r 'keys[0]')
+  assert_equal "$key_name" "systemMessage"
+
+  # systemMessage value should be a string
+  local message_type
+  message_type=$(echo "$output_json" | jq -r '.systemMessage | type')
+  assert_equal "$message_type" "string"
+}
+
+# Test 9: SessionStart handles malformed state file JSON
+# bats test_tags=error-handling,malformed-json
+@test "should fail fast with malformed state file" {
+  # Create malformed state file
+  mkdir -p "$TEST_REPO/.git/handoff-pending"
+  echo "not valid json" >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
+
+  # Prepare input JSON
+  local input=$(jq -n \
+    --arg cwd "$TEST_REPO" \
+    '{
+      session_id: "new-session-malformed",
+      cwd: $cwd,
+      source: "compact"
+    }')
+
+  # Run hook - will fail due to jq parsing error (set -euo pipefail)
+  run bash "$SESSIONSTART_HOOK" <<<"$input"
+
+  # Should fail (jq returns non-zero for malformed JSON)
+  assert_failure
+}
+
+# Test 10: SessionStart with OLD state format (previous_session) does NOT inject
+# bats test_tags=backward-compatibility,old-format
+@test "should NOT inject handoff when state file uses old previous_session format" {
+  # Create state file with OLD architecture format
+  mkdir -p "$TEST_REPO/.git/handoff-pending"
+  jq -n \
+    --arg session "old-session-uuid" \
+    --arg cwd "$TEST_REPO" \
+    '{
+      previous_session: $session,
+      trigger: "manual",
+      cwd: $cwd,
+      user_instructions: "old format instructions",
+      type: "compact"
+    }' \
+    >"$TEST_REPO/.git/handoff-pending/handoff-context.json"
+
+  # Prepare input JSON
+  local input=$(jq -n \
+    --arg cwd "$TEST_REPO" \
+    '{
+      session_id: "new-session-old-format",
       cwd: $cwd,
       source: "compact"
     }')
@@ -313,9 +385,9 @@ teardown() {
   # Should exit successfully
   assert_success
 
-  # Should have no output
+  # Should have no output (handoff_content is missing)
   assert_output ""
 
-  # State file should be cleaned up (null treated as empty)
-  assert_file_not_exist "$TEST_REPO/.git/handoff-pending/handoff-context.json"
+  # State file should still exist (not cleaned up)
+  assert_file_exists "$TEST_REPO/.git/handoff-pending/handoff-context.json"
 }
