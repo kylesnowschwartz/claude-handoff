@@ -33,17 +33,17 @@ Traditional compaction is lossy and unfocused - each summary degrades context qu
 
 1. **PreCompact Hook**: Activates only when you use `/compact handoff:...` format
    - Extracts your goal from the `handoff:` prefix
-   - Saves session ID and goal to `.git/handoff-pending/handoff-context.json`
+   - Uses `claude --resume <session> --fork-session --model haiku --print <prompt>` to generate handoff immediately
+   - Saves pre-generated handoff content and goal to `.git/handoff-pending/handoff-context.json`
 
-2. **Compact**: Proceeds normally, creating a new session
+2. **Compact**: Proceeds normally
 
-3. **SessionStart Hook**: Runs in the new session
-   - Reads your goal from the saved state
-   - Uses `claude --resume <previous-session>` with your goal as context filter
-   - Generates goal-focused handoff containing only relevant context
+3. **SessionStart Hook**: Runs in the continued session
+   - Reads pre-generated handoff content from saved state
    - Injects handoff as system message
+   - Cleans up state file
 
-4. **Result**: New session starts with focused context, ready to execute your goal
+4. **Result**: Session continues with focused context injected, ready to execute your goal
 
 ### Configuration
 
