@@ -21,8 +21,10 @@
 #   3. Check logs:
 #        tail -f /tmp/handoff-sessionstart.log
 #   4. Verify handoff appears in new session
-#   5. Check state file cleaned up:
-#        ls -la .git/handoff-pending/  # should not exist
+#   5. Check state file cleaned up on success:
+#        ls -la .git/handoff-pending/  # should not exist after successful handoff
+#   6. Check exit codes logged (should be 0 on success)
+#   7. Verify timeout works: handoff should not hang >30s
 #
 # MANUAL TESTING WITH FAKE STATE:
 #   # Create fake state
@@ -42,9 +44,9 @@
 #
 set -euo pipefail
 
-# Debug logging
+# Debug logging - fresh log each run
 LOG_FILE="/tmp/handoff-sessionstart.log"
-exec 2>>"$LOG_FILE"
+exec 2>"$LOG_FILE"
 set -x
 echo "[$(date -Iseconds)] SessionStart hook triggered" >>"$LOG_FILE"
 
@@ -83,7 +85,9 @@ fi
 # Generate handoff using claude --resume
 echo "[$(date -Iseconds)] Invoking claude --resume $previous_session" >>"$LOG_FILE"
 
-handoff=$(claude --resume "$previous_session" --print --model haiku \
+# Capture exit code and add timeout, redirect stderr to log
+handoff_exit_code=0
+handoff=$(timeout 90s claude --resume "$previous_session" --print --model haiku \
   "The previous session was compacted (trigger: $trigger).
 Pay special attention to context that may have been lost in compaction.
 
@@ -99,19 +103,21 @@ Include:
 Format as concise markdown. Be specific and actionable. Omit meta-discussion about creating this handoff.
 
 Ensure the user knows this was a result of the Claude-Handoff plugin system.
-" 2>&1)
+" 2>>"$LOG_FILE") || handoff_exit_code=$?
 
-# Clean up state file
-rm -f "$state_file"
-rmdir .git/handoff-pending 2>/dev/null || true
-
+echo "[$(date -Iseconds)] Claude exit code: $handoff_exit_code" >>"$LOG_FILE"
 echo "[$(date -Iseconds)] Handoff length: ${#handoff} chars" >>"$LOG_FILE"
 
-# If handoff generation failed or is empty, exit silently
-if [[ -z "$handoff" ]] || [[ "$handoff" == *"No conversation found"* ]]; then
-  echo "[$(date -Iseconds)] Handoff generation failed or empty" >>"$LOG_FILE"
+# If handoff generation failed or is empty, exit silently WITHOUT cleanup
+# This keeps the state file for retry on next session start
+if [[ $handoff_exit_code -ne 0 ]] || [[ -z "$handoff" ]] || [[ "$handoff" == *"No conversation found"* ]]; then
+  echo "[$(date -Iseconds)] Handoff generation failed (exit: $handoff_exit_code), keeping state for retry" >>"$LOG_FILE"
   exit 0
 fi
+
+# Only cleanup state file on SUCCESS
+rm -f "$state_file"
+rmdir .git/handoff-pending 2>/dev/null || true
 
 echo "[$(date -Iseconds)] Handoff generated successfully, returning additionalContext" >>"$LOG_FILE"
 
