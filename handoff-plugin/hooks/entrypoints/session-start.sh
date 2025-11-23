@@ -2,8 +2,8 @@
 # session-start.sh - SessionStart hook for claude-handoff plugin
 #
 # PURPOSE:
-#   Generates and injects intelligent handoff context after /compact
-#   by using claude --resume to analyze the previous session.
+#   Generates goal-focused handoff context after `/compact handoff:<goal>`
+#   by using claude --resume to extract relevant context from previous session.
 #
 # HOOK EVENT: SessionStart (matcher: "compact")
 #   - Fires when sessions start after compact operations
@@ -11,30 +11,31 @@
 #
 # BEHAVIOR:
 #   - Checks for pending handoff state saved by pre-compact.sh
-#   - Uses claude --resume to generate handoff prompt from previous session
-#   - Injects generated handoff as additionalContext for new session
+#   - Uses user's goal to focus context extraction from previous session
+#   - Uses claude --resume to generate goal-focused handoff prompt
+#   - Injects generated handoff as systemMessage for new session
 #   - Cleans up state file after successful generation
 #
 # TESTING:
 #   1. Enable debug logging in hooks/lib/logging.sh (set LOGGING_ENABLED=true)
-#   2. Run /compact after some work
-#   3. Check logs:
+#   2. Run: /compact handoff:implement feature X
+#   3. New session starts automatically
+#   4. Check logs:
 #        tail -f /tmp/handoff-sessionstart.log
-#   4. Verify handoff appears in new session
-#   5. Check state file cleaned up on success:
+#   5. Verify goal-focused handoff appears as system message in new session
+#   6. Check state file cleaned up on success:
 #        ls -la .git/handoff-pending/  # should not exist after successful handoff
-#   6. Check exit codes logged (should be 0 on success)
-#   7. Verify timeout works: handoff should not hang >30s
+#   7. Verify handoff focused on user's goal, not full session summary
 #
 # MANUAL TESTING WITH FAKE STATE:
 #   # Create fake state
 #   mkdir -p .git/handoff-pending
-#   echo '{"previous_session":"SESSION_ID","trigger":"manual","cwd":"'$(pwd)'"}' > .git/handoff-pending/handoff-context.json
+#   echo '{"previous_session":"SESSION_ID","trigger":"manual","cwd":"'$(pwd)'","user_instructions":"implement auth feature"}' > .git/handoff-pending/handoff-context.json
 #
 #   # Run hook (replace SESSION_ID with a real session from ~/.claude/projects/*/transcript.jsonl)
 #   echo '{"cwd":"'$(pwd)'","source":"compact"}' | bash session-start.sh
 #
-#   # Check output should contain additionalContext with handoff
+#   # Check output should contain systemMessage with goal-focused handoff
 #   # Cleanup
 #   rm -rf .git/handoff-pending
 #
@@ -83,8 +84,9 @@ log "Found state file: $state_file"
 # Read handoff context
 previous_session=$(cat "$state_file" | jq -r '.previous_session // ""')
 trigger=$(cat "$state_file" | jq -r '.trigger // ""')
+user_instructions=$(cat "$state_file" | jq -r '.user_instructions // ""')
 
-log "State: session=$previous_session trigger=$trigger"
+log "State: session=$previous_session trigger=$trigger user_instructions=$user_instructions"
 
 if [[ -z "$previous_session" ]]; then
   log "No previous_session, cleaning up"
@@ -95,26 +97,31 @@ fi
 # Generate handoff using claude --resume
 log "Invoking claude --resume $previous_session"
 
+# Build handoff generation prompt with user instructions
+handoff_prompt="The previous session was compacted (trigger: $trigger).
+
+USER'S GOAL FOR THE NEW SESSION:
+$user_instructions
+
+Your task: Analyze the previous conversation and extract ONLY the context relevant to achieving the user's goal above.
+
+Create a focused handoff prompt that includes:
+
+1. **Context from previous session** - What we were working on that's relevant to the new goal
+2. **Key decisions/patterns** - Approaches, conventions, or constraints already established
+3. **Relevant files** - Paths to files that matter for the new goal (paths only)
+4. **Current state** - Where things were left that affects the new work
+5. **Blockers/dependencies** - Any issues or prerequisites the new session should know about
+
+Be ruthlessly selective. Omit anything not relevant to: $user_instructions
+
+Format as concise markdown. Start directly with \"## Handoff Context\" - no preamble about this being a handoff or mentioning the plugin."
+
 # Capture exit code and add timeout, redirect stderr to log
 # Set env var to prevent recursive hook invocation
 handoff_exit_code=0
 handoff=$(HANDOFF_IN_PROGRESS=1 claude --resume "$previous_session" --model haiku --print \
-  "The previous session was compacted (trigger: $trigger).
-Pay special attention to context that may have been lost in compaction.
-
-Analyze this conversation and create a focused handoff prompt for the next session.
-
-Include:
-1. **What we were working on** - Current task/goal
-2. **Key decisions made** - Important choices or approaches agreed upon
-3. **Relevant files** - Paths to files read/modified (paths only, no content)
-4. **Next steps** - What should happen next
-5. **Blockers** - Any errors, issues, or open questions
-
-Format as concise markdown. Be specific and actionable. Omit meta-discussion about creating this handoff.
-
-Ensure the user knows this was a result of the Claude-Handoff plugin system.
-") || handoff_exit_code=$?
+  "$handoff_prompt") || handoff_exit_code=$?
 
 log "Claude exit code: $handoff_exit_code"
 log "Handoff length: ${#handoff} chars"

@@ -1,2 +1,5 @@
 history/
 .git/handoff-pending/
+
+# Test artifacts
+tests/test_helper/bats-*/
